@@ -1,0 +1,12 @@
+databases:
+  - name: Postgres
+    image: postgres
+    icon_url: https://d1q6f0aelx0por.cloudfront.net/product-logos/library-postgres-logo.png
+    tags:
+      - latest
+    variables:
+      Username: POSTGRES_USERNAME
+      Password: POSTGRES_PASSWORD
+      "Default database ": POSTGRES_DB
+    volumes:
+      pgsql_data: /var/lib/postgresql/data

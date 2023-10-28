@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+
+Name=DB Manager
+Comment=Wow much db manage
+Categories=Development;IDE;
+StartupWMClass=db-mgr
+
+Exec=ib-mgr %F
+Terminal=false

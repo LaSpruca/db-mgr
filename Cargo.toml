@@ -1,0 +1,19 @@
+[package]
+name = "db-mgr"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+bollard = "0.15.0"
+native-dialog = { version = "0.6.4" }
+directories = "5.0.1"
+futures = "0.3.29"
+iced = { version = "0.10.0", features = ["tokio", "image", "lazy"] }
+iced_aw = "0.7.0"
+serde = { version = "1.0.190", features = ["derive"] }
+serde_yaml = "0.9.27"
+reqwest = "0.11.22"
+itertools = "0.11.0"
