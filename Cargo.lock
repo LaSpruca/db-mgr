@@ -580,11 +580,13 @@ dependencies = [
  "futures",
  "iced",
  "iced_aw",
+ "iced_futures",
  "itertools",
  "native-dialog",
  "reqwest",
  "serde",
  "serde_yaml",
+ "tokio",
 ]
 
 [[package]]

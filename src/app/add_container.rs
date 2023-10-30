@@ -22,11 +22,18 @@ pub enum Event {
     SubmitPressed,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ButtonState {
+    None,
+    Ready,
+    Pulling,
+    Creating,
+}
+
 pub struct AddContainer<Message> {
     images: Vec<DatabaseConfig>,
     on_add: Box<dyn Fn(DbContainerConfig) -> Message>,
-    input_disabled: bool,
-    building: bool,
+    button_state: ButtonState,
 }
 
 #[derive(Debug)]
@@ -46,21 +53,19 @@ impl Default for AddContainerState {
 
 pub fn add_container<Message, Handler>(
     images: Vec<DatabaseConfig>,
-    input_disabled: bool,
-    building: bool,
+    button_state: ButtonState,
     on_add: Handler,
 ) -> AddContainer<Message>
 where
     Handler: Fn(DbContainerConfig) -> Message + 'static,
 {
-    AddContainer::new(images, input_disabled, building, on_add)
+    AddContainer::new(images, button_state, on_add)
 }
 
 impl<Message> AddContainer<Message> {
     pub fn new<Handler>(
         images: Vec<DatabaseConfig>,
-        input_disabled: bool,
-        building: bool,
+        button_state: ButtonState,
         on_add: Handler,
     ) -> Self
     where
@@ -68,8 +73,7 @@ impl<Message> AddContainer<Message> {
     {
         Self {
             images,
-            input_disabled,
-            building,
+            button_state,
             on_add: Box::new(on_add),
         }
     }
@@ -131,7 +135,7 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                     new_config.voluems = new_config
                         .voluems
                         .into_iter()
-                        .map(|(name, value)| (format!("__db-mgr__{}__{name}", config.name), value))
+                        .map(|(name, value)| (format!("db-mgr__{}__{name}", config.name), value))
                         .collect();
 
                     new_config.variables = new_config
@@ -139,6 +143,8 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                         .into_iter()
                         .filter(|(_, value)| value != "")
                         .collect();
+
+                    new_config.name = format!("db-mgr__{}", config.name);
 
                     let on_add = self.on_add.as_ref();
 
@@ -225,10 +231,20 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                 }
             }
 
-            if self.building {
-                content = content.push(badge("Building").style(BadgeStyles::Success));
-            } else if !self.input_disabled && config.name != "" {
-                content = content.push(button("Create Container").on_press(Event::SubmitPressed));
+            match (self.button_state, config.name.as_str()) {
+                (ButtonState::None, _) => {}
+                (ButtonState::Ready, "") => {}
+
+                (ButtonState::Ready, _) => {
+                    content =
+                        content.push(button("Create Container").on_press(Event::SubmitPressed));
+                }
+                (ButtonState::Pulling, _) => {
+                    content = content.push(badge("Pulling").style(BadgeStyles::Success));
+                }
+                (ButtonState::Creating, _) => {
+                    content = content.push(badge("Creating").style(BadgeStyles::Success));
+                }
             }
         }
 

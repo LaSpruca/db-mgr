@@ -1,6 +1,12 @@
 mod add_container;
 mod cantainer_card;
+mod subscription;
 
+use self::{
+    add_container::{add_container, ButtonState},
+    cantainer_card::container_card,
+    subscription::create_container,
+};
 use crate::{
     data::{ConfigFile, DatabaseConfig},
     docker::{get_containers, start_container, stop_container, DbContainer, DbContainerConfig},
@@ -12,34 +18,33 @@ use iced::{
     executor::Default as DefaultExector,
     font,
     widget::{button, column, container, image::Handle, row, scrollable, text, vertical_rule},
-    Application, Command, Element, Length, Renderer, Theme,
+    Application, Command, Element, Length, Renderer, Subscription, Theme,
 };
 use iced_aw::graphics::icons::ICON_FONT_BYTES;
 use itertools::Itertools;
 use std::collections::HashMap;
 
-use self::{add_container::add_container, cantainer_card::container_card};
-
 #[derive(Clone, Debug)]
 pub enum Message {
     GetContainers,
-    GetImages,
+    GetThumbnails,
     FontLoaded(Result<(), font::Error>),
     Error(String),
     ContainersLoaded(Vec<DbContainer>),
     StartContainer(String),
     StopContainer(String),
     ViewContainer(String),
-    LoadedImages(HashMap<String, Handle>),
+    LoadedThumbnails(HashMap<String, Handle>),
     ShowCreateContainer,
     CreateContainer(DbContainerConfig),
+    PullingContainer,
+    BuildingContainer,
+    BuildError(String),
+    CreatedContainer,
 }
 
 pub enum MainViewState {
-    CreateContainer {
-        create_button_disabled: bool,
-        building: bool,
-    },
+    CreateContainer(ButtonState),
     ViewContainer(usize),
     None,
 }
@@ -51,6 +56,7 @@ pub struct DbMgrApp {
     thumbnails: HashMap<String, Handle>,
     main_view: MainViewState,
     default_thumbnail: Handle,
+    build_subscription: Option<DbContainerConfig>,
 }
 
 fn error(message: impl Into<String>) -> Command<Message> {
@@ -85,6 +91,7 @@ impl Application for DbMgrApp {
             images: config_file.databases,
             main_view: MainViewState::None,
             default_thumbnail: Handle::from_memory(include_bytes!("../../default_image.png")),
+            build_subscription: None,
         };
 
         (
@@ -92,9 +99,22 @@ impl Application for DbMgrApp {
             Command::batch([
                 font::load(ICON_FONT_BYTES).map(Message::FontLoaded),
                 Command::perform(future::ready(()), |_| Message::GetContainers),
-                Command::perform(future::ready(()), |_| Message::GetImages),
+                Command::perform(future::ready(()), |_| Message::GetThumbnails),
             ]),
         )
+    }
+
+    fn subscription(&self) -> Subscription<Self::Message> {
+        match self.build_subscription.as_ref() {
+            Some(container_config) => create_container(self.docker, container_config.to_owned())
+                .map(|event| match event {
+                    crate::docker::CreateContainerEvent::Pulling => Message::PullingContainer,
+                    crate::docker::CreateContainerEvent::Building => Message::BuildingContainer,
+                    crate::docker::CreateContainerEvent::Done => Message::CreatedContainer,
+                    crate::docker::CreateContainerEvent::Error(ex) => Message::BuildError(ex),
+                }),
+            None => Subscription::none(),
+        }
     }
 
     fn title(&self) -> String {
@@ -109,7 +129,7 @@ impl Application for DbMgrApp {
                     Ok(containers) => Message::ContainersLoaded(containers),
                 })
             }
-            Message::LoadedImages(images) => {
+            Message::LoadedThumbnails(images) => {
                 self.thumbnails = images;
                 Command::none()
             }
@@ -118,7 +138,7 @@ impl Application for DbMgrApp {
                 self.main_view = MainViewState::None;
                 Command::none()
             }
-            Message::GetImages => Command::perform(
+            Message::GetThumbnails => Command::perform(
                 stream::iter(
                     self.images
                         .clone()
@@ -127,14 +147,14 @@ impl Application for DbMgrApp {
                 )
                 .filter_map(|item| async move {
                     Some((
-                        item.name.clone(),
+                        item.image.clone(),
                         Handle::from_memory(
                             reqwest::get(item.icon_url).await.ok()?.bytes().await.ok()?,
                         ),
                     ))
                 })
                 .collect(),
-                Message::LoadedImages,
+                Message::LoadedThumbnails,
             ),
             Message::Error(ex) => {
                 if let Err(dialog_err) = native_dialog::MessageDialog::new()
@@ -147,20 +167,18 @@ impl Application for DbMgrApp {
                 }
                 Command::none()
             }
-            Message::StartContainer(container) => Command::perform(
-                start_container(container, self.docker),
-                |result| match result {
+            Message::StartContainer(id) => {
+                Command::perform(start_container(id, self.docker), |result| match result {
                     Err(ex) => Message::Error(format!("Could not start docker container: {ex}")),
                     Ok(_) => Message::GetContainers,
-                },
-            ),
-            Message::StopContainer(container) => Command::perform(
-                stop_container(container, self.docker),
-                |result| match result {
+                })
+            }
+            Message::StopContainer(id) => {
+                Command::perform(stop_container(id, self.docker), |result| match result {
                     Err(ex) => Message::Error(format!("Could not stop docker container: {ex}")),
                     Ok(_) => Message::GetContainers,
-                },
-            ),
+                })
+            }
             Message::ViewContainer(container_name) => {
                 self.main_view = self
                     .containers
@@ -178,14 +196,35 @@ impl Application for DbMgrApp {
                 Command::none()
             }
             Message::ShowCreateContainer => {
-                self.main_view = MainViewState::CreateContainer {
-                    building: false,
-                    create_button_disabled: false,
-                };
+                self.main_view = MainViewState::CreateContainer(ButtonState::Ready);
                 Command::none()
             }
             Message::FontLoaded(_) => Command::none(),
-            Message::CreateContainer(_container) => error("Not creating container rn lol"),
+            Message::CreateContainer(container_config) => {
+                self.main_view = MainViewState::CreateContainer(ButtonState::Creating);
+                // let rx = create_container(self.docker, container_config);
+
+                self.build_subscription = Some(container_config);
+
+                Command::none()
+            }
+            Message::BuildError(ex) => {
+                self.main_view = MainViewState::CreateContainer(ButtonState::Ready);
+                self.build_subscription = None;
+                error(ex)
+            }
+            Message::PullingContainer => {
+                self.main_view = MainViewState::CreateContainer(ButtonState::Pulling);
+                Command::none()
+            }
+            Message::BuildingContainer => {
+                self.main_view = MainViewState::CreateContainer(ButtonState::Creating);
+                Command::none()
+            }
+            Message::CreatedContainer => {
+                self.build_subscription = None;
+                Command::perform(future::ready(()), |_| Message::GetContainers)
+            }
         }
     }
 
@@ -198,7 +237,7 @@ impl Application for DbMgrApp {
                         container_card(
                             item,
                             self.thumbnails
-                                .get(&item.image)
+                                .get(item.image.split(":").next().unwrap_or(item.image.as_str()))
                                 .map(|item| item.clone())
                                 .unwrap_or_else(|| self.default_thumbnail.clone()),
                         )
@@ -219,16 +258,9 @@ impl Application for DbMgrApp {
         .width(Length::FillPortion(1));
 
         let main_windown = container(match self.main_view {
-            MainViewState::CreateContainer {
-                building,
-                create_button_disabled,
-            } => add_container(
-                self.images.clone(),
-                create_button_disabled,
-                building,
-                Message::CreateContainer,
-            )
-            .into(),
+            MainViewState::CreateContainer(state) => {
+                add_container(self.images.clone(), state, Message::CreateContainer).into()
+            }
             MainViewState::None => row!().into(),
             MainViewState::ViewContainer(_) => {
                 Into::<Element<Message, Renderer>>::into(text("todo"))

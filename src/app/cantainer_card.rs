@@ -1,6 +1,6 @@
 use iced::{
     theme::{Button, Text},
-    widget::{button, column, component, horizontal_rule, image, row, text, Component},
+    widget::{button, column, component, container, horizontal_rule, image, row, text, Component},
     Color, Element, Length, Pixels, Renderer,
 };
 use iced_aw::{Icon, ICON_FONT};
@@ -83,18 +83,19 @@ impl<Message> Component<Message, Renderer> for ContainerCard<Message> {
                 .as_ref()
                 .map(|fun| fun(self.container.id.clone())),
             Event::StopClicked => self
-                .on_start_click
+                .on_stop_click
                 .as_ref()
                 .map(|fun| fun(self.container.id.clone())),
-            Event::ViewClicked => todo!(),
+            Event::ViewClicked => None,
         }
     }
 
     fn view(&self, _: &Self::State) -> Element<'_, Self::Event, Renderer> {
         let mut buttons = row(vec![])
-            .width(Length::FillPortion(1))
+            .width(Length::FillPortion(2))
             .height(Length::Fill)
-            .align_items(iced::Alignment::Center);
+            .align_items(iced::Alignment::Center)
+            .spacing(5);
 
         match self.container.state {
             bollard::service::ContainerStateStatusEnum::CREATED
@@ -109,7 +110,7 @@ impl<Message> Component<Message, Renderer> for ContainerCard<Message> {
             bollard::service::ContainerStateStatusEnum::RUNNING => {
                 buttons = buttons.push(
                     button(text(Icon::StopFill).font(ICON_FONT))
-                        .style(Button::Positive)
+                        .style(Button::Destructive)
                         .on_press(Event::StopClicked),
                 )
             }
@@ -118,19 +119,25 @@ impl<Message> Component<Message, Renderer> for ContainerCard<Message> {
 
         buttons = buttons.push(button("View").on_press(Event::ViewClicked));
 
-        row!(
-            image::viewer(self.image.clone()).width(Length::FillPortion(1)),
-            column!(
-                text(&self.container.name).size(20),
-                text(&self.container.image).style(Text::Color(Color::from_rgb8(150, 150, 150)))
-            )
-            .width(Length::FillPortion(2))
-            .height(Length::Fill),
-            buttons,
+        column!(
+            row!(
+                container(image::Image::new(self.image.clone()).height(30))
+                    .width(Length::FillPortion(1))
+                    .height(Length::Fill)
+                    .align_y(iced::alignment::Vertical::Center)
+                    .align_x(iced::alignment::Horizontal::Center),
+                column!(
+                    text(&self.container.name).size(20),
+                    text(&self.container.image).style(Text::Color(Color::from_rgb8(150, 150, 150)))
+                )
+                .width(Length::FillPortion(3))
+                .height(Length::Fill),
+                buttons,
+            ),
             horizontal_rule(2)
         )
         .width(Length::Fill)
-        .height(Pixels(40.0f32))
+        .height(Pixels(50.0f32))
         .into()
     }
 }

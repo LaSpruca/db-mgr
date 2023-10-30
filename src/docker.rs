@@ -3,11 +3,14 @@ use bollard::{
     container::{Config, CreateContainerOptions, ListContainersOptions},
     errors::Error,
     image::CreateImageOptions,
-    service::{ContainerStateStatusEnum, HostConfig, Mount},
+    service::{ContainerStateStatusEnum, HostConfig, Mount, MountTypeEnum},
     volume::CreateVolumeOptions,
     Docker,
 };
-use futures::{stream, StreamExt};
+use futures::{
+    channel::mpsc::{channel, Receiver},
+    stream, FutureExt, SinkExt, StreamExt,
+};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -51,73 +54,115 @@ async fn create_volume(docker: &Docker, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn create_container(
-    docker: &Docker,
+#[derive(Clone, Debug, Hash)]
+pub enum CreateContainerEvent {
+    Pulling,
+    Building,
+    Done,
+    Error(String),
+}
+
+pub fn create_container(
+    docker: &'static Docker,
     container_config: DbContainerConfig,
-) -> anyhow::Result<()> {
-    match docker.inspect_container(&container_config.name, None).await {
-        Err(Error::DockerResponseServerError {
-            status_code: 404, ..
-        }) => {}
-        Ok(_) => return Err(anyhow!("Container name conflict {}", container_config.name)),
-        Err(resp) => return Err(anyhow!(resp)),
-    };
+) -> Receiver<CreateContainerEvent> {
+    let (mut tx, rx) = channel(5);
+    let mut tx2 = tx.clone();
 
-    let mut image_pull_stream = docker.create_image(
-        Some(CreateImageOptions {
-            from_image: container_config.image.as_str(),
-            tag: container_config.tag.as_str(),
-            ..Default::default()
-        }),
-        None,
-        None,
-    );
+    tokio::spawn((|| {
+        async move {
+            match docker.inspect_container(&container_config.name, None).await {
+                Err(Error::DockerResponseServerError {
+                    status_code: 404, ..
+                }) => {}
+                Ok(_) => return Err(anyhow!("Container name conflict {}", container_config.name)),
+                Err(resp) => return Err(anyhow!(resp)),
+            };
 
-    if let Some(result) = image_pull_stream.next().await {
-        result?;
-    }
-
-    let env = container_config
-        .variables
-        .into_iter()
-        .map(|(name, value)| format!("{name}=\"{value}\""))
-        .collect::<Vec<_>>();
-
-    for (name, _) in container_config.voluems.iter() {
-        create_volume(docker, name).await?;
-    }
-
-    docker
-        .create_container(
-            Some(CreateContainerOptions {
-                name: container_config.name,
-                ..Default::default()
-            }),
-            Config {
-                labels: Some(HashMap::from([(LABEL, "container")])),
-                env: Some(env.iter().map(|x| x.as_str()).collect()),
-                image: Some(container_config.image.as_str()),
-                host_config: Some(HostConfig {
-                    mounts: Some(
-                        container_config
-                            .voluems
-                            .into_iter()
-                            .map(|(name, path)| Mount {
-                                read_only: Some(false),
-                                target: Some(path),
-                                source: Some(name),
-                                ..Default::default()
-                            })
-                            .collect(),
-                    ),
+            let mut image_pull_stream = docker.create_image(
+                Some(CreateImageOptions {
+                    from_image: container_config.image.as_str(),
+                    tag: container_config.tag.as_str(),
                     ..Default::default()
                 }),
-                ..Default::default()
-            },
-        )
-        .await?;
+                None,
+                None,
+            );
 
-    Ok(())
+            while let Some(result) = image_pull_stream.next().await {
+                tx.send(CreateContainerEvent::Pulling).await?;
+                #[cfg(debug_assertions)]
+                {
+                    let result: bollard::service::CreateImageInfo = result?;
+                    println!("{result:?}")
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    result?;
+                }
+            }
+
+            let env = container_config
+                .variables
+                .into_iter()
+                .map(|(name, value)| format!("{name}=\"{value}\""))
+                .collect::<Vec<_>>();
+
+            tx.send(CreateContainerEvent::Building).await?;
+
+            for (name, _) in container_config.voluems.iter() {
+                create_volume(docker, name).await?;
+            }
+
+            let container_name = container_config.name.clone();
+            let image = format!("{}:{}", container_config.image, container_config.tag);
+            let container = docker
+                .create_container(
+                    Some(CreateContainerOptions {
+                        name: container_config.name,
+                        ..Default::default()
+                    }),
+                    Config {
+                        labels: Some(HashMap::from([(LABEL, "container")])),
+                        env: Some(env.iter().map(|x| x.as_str()).collect()),
+                        image: Some(&image),
+
+                        host_config: Some(HostConfig {
+                            mounts: Some(
+                                container_config
+                                    .voluems
+                                    .into_iter()
+                                    .map(|(name, path)| Mount {
+                                        read_only: Some(false),
+                                        target: Some(path),
+                                        source: Some(name),
+                                        typ: Some(MountTypeEnum::VOLUME),
+                                        ..Default::default()
+                                    })
+                                    .collect(),
+                            ),
+                            ..Default::default()
+                        }),
+                        ..Default::default()
+                    },
+                )
+                .await?;
+
+            docker
+                .start_container::<String>(&container_name, None)
+                .await?;
+            println!("{container:?}");
+            Ok(())
+        }
+        .then(|result: Result<(), anyhow::Error>| async move {
+            match result.err() {
+                Some(ex) => tx2.send(CreateContainerEvent::Error(format!("{ex}"))).await,
+                None => tx2.send(CreateContainerEvent::Done).await,
+            }
+        })
+    })());
+
+    rx
 }
 
 pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>> {
@@ -125,21 +170,24 @@ pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>>
         docker
             .list_containers(Some(ListContainersOptions {
                 filters: HashMap::from([("label".into(), vec![format!("{LABEL}=container")])]),
+                all: true,
                 ..Default::default()
             }))
             .await?,
     )
     .filter_map(|summary| async {
-        docker
-            .inspect_container(summary.names?.get(0)?, None)
-            .await
-            .ok()
+        let out = docker.inspect_container(summary.id?.as_ref(), None).await;
+
+        out.ok()
     })
     .filter_map(|result| async {
         Some(DbContainer {
             id: result.id?,
             name: result.name?,
-            image: result.image?,
+            image: result
+                .config
+                .as_ref()
+                .map(|config| config.image.clone())??,
             state: result.state?.status?,
             volumes: result
                 .mounts
@@ -170,14 +218,14 @@ pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>>
     .await)
 }
 
-pub async fn start_container(name: String, docker: &Docker) -> anyhow::Result<()> {
-    docker.start_container::<String>(&name, None).await?;
+pub async fn start_container(id: String, docker: &Docker) -> anyhow::Result<()> {
+    docker.start_container::<String>(&id, None).await?;
 
     return Ok(());
 }
 
-pub async fn stop_container(name: String, docker: &Docker) -> anyhow::Result<()> {
-    docker.stop_container(&name, None).await?;
+pub async fn stop_container(id: String, docker: &Docker) -> anyhow::Result<()> {
+    docker.stop_container(&id, None).await?;
 
     return Ok(());
 }
