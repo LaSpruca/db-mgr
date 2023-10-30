@@ -36,7 +36,10 @@ pub enum Message {
 }
 
 pub enum MainViewState {
-    CreateContainer(bool),
+    CreateContainer {
+        create_button_disabled: bool,
+        building: bool,
+    },
     ViewContainer(usize),
     None,
 }
@@ -175,7 +178,10 @@ impl Application for DbMgrApp {
                 Command::none()
             }
             Message::ShowCreateContainer => {
-                self.main_view = MainViewState::CreateContainer(false);
+                self.main_view = MainViewState::CreateContainer {
+                    building: false,
+                    create_button_disabled: false,
+                };
                 Command::none()
             }
             Message::FontLoaded(_) => Command::none(),
@@ -205,17 +211,21 @@ impl Application for DbMgrApp {
             )
             .push(
                 container(button("Add container").on_press(Message::ShowCreateContainer))
-                    .padding([5, 0, 5, 0]),
+                    .padding([5, 0]),
             )
             .align_items(iced::Alignment::Center)
             .width(Length::Fill),
         )
-        .width(Length::FillPortion(2));
+        .width(Length::FillPortion(1));
 
         let main_windown = container(match self.main_view {
-            MainViewState::CreateContainer(submit_disabled) => add_container(
+            MainViewState::CreateContainer {
+                building,
+                create_button_disabled,
+            } => add_container(
                 self.images.clone(),
-                submit_disabled,
+                create_button_disabled,
+                building,
                 Message::CreateContainer,
             )
             .into(),
@@ -224,7 +234,7 @@ impl Application for DbMgrApp {
                 Into::<Element<Message, Renderer>>::into(text("todo"))
             }
         })
-        .width(Length::FillPortion(3))
+        .width(Length::FillPortion(2))
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center);
 
