@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use iced::{
     theme::Text,
     widget::{
-        button, checkbox, column, component, pick_list, row, scrollable, text, text_input,
-        Component,
+        button, checkbox, column, component, pick_list, progress_bar, row, scrollable, text,
+        text_input, Component,
     },
     Color, Element, Length, Renderer,
 };
@@ -22,11 +22,11 @@ pub enum Event {
     SubmitPressed,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ButtonState {
     None,
     Ready,
-    Pulling,
+    Pulling(HashMap<String, f32>),
     Creating,
 }
 
@@ -231,7 +231,7 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                 }
             }
 
-            match (self.button_state, config.name.as_str()) {
+            match (&self.button_state, config.name.as_str()) {
                 (ButtonState::None, _) => {}
                 (ButtonState::Ready, "") => {}
 
@@ -239,8 +239,17 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                     content =
                         content.push(button("Create Container").on_press(Event::SubmitPressed));
                 }
-                (ButtonState::Pulling, _) => {
+                (ButtonState::Pulling(states), _) => {
                     content = content.push(badge("Pulling").style(BadgeStyles::Success));
+                    for (image, progress) in states {
+                        content = content.push(
+                            row!(
+                                text(image).width(Length::FillPortion(1)),
+                                progress_bar(0.0..=1.0, *progress).width(Length::FillPortion(3))
+                            )
+                            .spacing(15),
+                        );
+                    }
                 }
                 (ButtonState::Creating, _) => {
                     content = content.push(badge("Creating").style(BadgeStyles::Success));

@@ -54,12 +54,13 @@ async fn create_volume(docker: &Docker, name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug)]
 pub enum CreateContainerEvent {
     Pulling,
     Building,
     Done,
     Error(String),
+    Download(String, f32),
 }
 
 pub fn create_container(
@@ -90,15 +91,28 @@ pub fn create_container(
             );
 
             while let Some(result) = image_pull_stream.next().await {
-                tx.send(CreateContainerEvent::Pulling).await?;
-                #[cfg(debug_assertions)]
-                {
-                    let result: bollard::service::CreateImageInfo = result?;
-                    println!("{result:?}")
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    result?;
+                let result = result?;
+
+                if let Some(status) = result.status {
+                    if status == "Downloading" {
+                        let f = result.progress_detail.and_then(|progress| {
+                            Some((
+                                result.id?,
+                                progress.current? as f32 / progress.total? as f32,
+                            ))
+                        });
+
+                        if let Some((id, progress)) = f {
+                            tx.send(CreateContainerEvent::Download(id, progress))
+                                .await?;
+                        }
+                    } else if status == "Download complete" {
+                        if let Some(id) = result.id {
+                            tx.send(CreateContainerEvent::Download(id, 1.0)).await?;
+                        }
+                    }
+                } else {
+                    tx.send(CreateContainerEvent::Pulling).await?;
                 }
             }
 

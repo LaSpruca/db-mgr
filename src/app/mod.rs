@@ -41,6 +41,7 @@ pub enum Message {
     BuildingContainer,
     BuildError(String),
     CreatedContainer,
+    ImageDownload(String, f32),
 }
 
 pub enum MainViewState {
@@ -112,6 +113,9 @@ impl Application for DbMgrApp {
                     crate::docker::CreateContainerEvent::Building => Message::BuildingContainer,
                     crate::docker::CreateContainerEvent::Done => Message::CreatedContainer,
                     crate::docker::CreateContainerEvent::Error(ex) => Message::BuildError(ex),
+                    crate::docker::CreateContainerEvent::Download(key, value) => {
+                        Message::ImageDownload(key, value)
+                    }
                 }),
             None => Subscription::none(),
         }
@@ -213,8 +217,20 @@ impl Application for DbMgrApp {
                 self.build_subscription = None;
                 error(ex)
             }
-            Message::PullingContainer => {
-                self.main_view = MainViewState::CreateContainer(ButtonState::Pulling);
+            Message::ImageDownload(key, value) => {
+                // self.main_view = MainViewState::CreateContainer(ButtonState::Pulling);
+                match self.main_view {
+                    MainViewState::CreateContainer(ButtonState::Pulling(ref mut status)) => {
+                        status.insert(key, value);
+                    }
+                    MainViewState::ViewContainer(_)
+                    | MainViewState::None
+                    | MainViewState::CreateContainer(_) => {
+                        self.main_view =
+                            MainViewState::CreateContainer(ButtonState::Pulling(HashMap::new()))
+                    }
+                }
+
                 Command::none()
             }
             Message::BuildingContainer => {
@@ -224,6 +240,11 @@ impl Application for DbMgrApp {
             Message::CreatedContainer => {
                 self.build_subscription = None;
                 Command::perform(future::ready(()), |_| Message::GetContainers)
+            }
+            Message::PullingContainer => {
+                self.main_view =
+                    MainViewState::CreateContainer(ButtonState::Pulling(HashMap::new()));
+                Command::none()
             }
         }
     }
@@ -258,8 +279,8 @@ impl Application for DbMgrApp {
         .width(Length::FillPortion(1));
 
         let main_windown = container(match self.main_view {
-            MainViewState::CreateContainer(state) => {
-                add_container(self.images.clone(), state, Message::CreateContainer).into()
+            MainViewState::CreateContainer(ref state) => {
+                add_container(self.images.clone(), state.clone(), Message::CreateContainer).into()
             }
             MainViewState::None => row!().into(),
             MainViewState::ViewContainer(_) => {
