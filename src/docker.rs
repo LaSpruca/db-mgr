@@ -46,7 +46,7 @@ async fn create_volume(docker: &Docker, name: &str) -> anyhow::Result<()> {
     docker
         .create_volume(CreateVolumeOptions {
             name,
-            labels: HashMap::from([(LABEL.into(), "volume".into())]),
+            labels: HashMap::from([(LABEL, "volume")]),
             ..Default::default()
         })
         .await?;
@@ -70,7 +70,7 @@ pub fn create_container(
     let (mut tx, rx) = channel(5);
     let mut tx2 = tx.clone();
 
-    tokio::spawn((|| {
+    tokio::spawn(
         async move {
             match docker.inspect_container(&container_config.name, None).await {
                 Err(Error::DockerResponseServerError {
@@ -173,8 +173,8 @@ pub fn create_container(
                 Some(ex) => tx2.send(CreateContainerEvent::Error(format!("{ex}"))).await,
                 None => tx2.send(CreateContainerEvent::Done).await,
             }
-        })
-    })());
+        }),
+    );
 
     rx
 }
@@ -209,7 +209,7 @@ pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>>
                     mounts
                         .into_iter()
                         .filter_map(|mount| {
-                            Some((mount.name.or_else(|| mount.source)?, mount.destination?))
+                            Some((mount.name.or(mount.source)?, mount.destination?))
                         })
                         .collect()
                 })
@@ -219,7 +219,7 @@ pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>>
                 .env
                 .map(|e| {
                     e.into_iter()
-                        .map(|entry| match entry.split_once("=") {
+                        .map(|entry| match entry.split_once('=') {
                             Some((name, var)) => (name.into(), var.into()),
                             None => (entry, "".into()),
                         })
@@ -235,11 +235,11 @@ pub async fn get_containers(docker: &Docker) -> anyhow::Result<Vec<DbContainer>>
 pub async fn start_container(id: String, docker: &Docker) -> anyhow::Result<()> {
     docker.start_container::<String>(&id, None).await?;
 
-    return Ok(());
+    Ok(())
 }
 
 pub async fn stop_container(id: String, docker: &Docker) -> anyhow::Result<()> {
     docker.stop_container(&id, None).await?;
 
-    return Ok(());
+    Ok(())
 }

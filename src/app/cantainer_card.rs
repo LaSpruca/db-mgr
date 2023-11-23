@@ -9,9 +9,9 @@ use crate::docker::DbContainer;
 
 #[derive(Clone)]
 pub enum Event {
-    StartClicked,
-    StopClicked,
-    ViewClicked,
+    Start,
+    Stop,
+    View,
 }
 
 pub fn container_card<Message>(
@@ -78,15 +78,18 @@ impl<Message> Component<Message, Renderer> for ContainerCard<Message> {
 
     fn update(&mut self, _: &mut Self::State, event: Self::Event) -> Option<Message> {
         match event {
-            Event::StartClicked => self
+            Event::Start => self
                 .on_start_click
                 .as_ref()
                 .map(|fun| fun(self.container.id.clone())),
-            Event::StopClicked => self
+            Event::Stop => self
                 .on_stop_click
                 .as_ref()
                 .map(|fun| fun(self.container.id.clone())),
-            Event::ViewClicked => None,
+            Event::View => self
+                .on_view_click
+                .as_ref()
+                .map(|fun| fun(self.container.id.clone())),
         }
     }
 
@@ -104,20 +107,20 @@ impl<Message> Component<Message, Renderer> for ContainerCard<Message> {
                 buttons = buttons.push(
                     button(text(Icon::PlayFill).font(ICON_FONT))
                         .style(Button::Positive)
-                        .on_press(Event::StartClicked),
+                        .on_press(Event::Start),
                 )
             }
             bollard::service::ContainerStateStatusEnum::RUNNING => {
                 buttons = buttons.push(
                     button(text(Icon::StopFill).font(ICON_FONT))
                         .style(Button::Destructive)
-                        .on_press(Event::StopClicked),
-                )
+                        .on_press(Event::Stop),
+                );
             }
             _ => {}
         };
 
-        buttons = buttons.push(button("View").on_press(Event::ViewClicked));
+        buttons = buttons.push(button("View").on_press(Event::View));
 
         column!(
             row!(

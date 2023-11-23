@@ -1,10 +1,12 @@
 mod add_container;
 mod cantainer_card;
+mod container_view;
 mod subscription;
 
 use self::{
     add_container::{add_container, ButtonState},
     cantainer_card::container_card,
+    container_view::container_view,
     subscription::create_container,
 };
 use crate::{
@@ -17,8 +19,8 @@ use iced::{
     alignment::{Horizontal, Vertical},
     executor::Default as DefaultExector,
     font,
-    widget::{button, column, container, image::Handle, row, scrollable, text, vertical_rule},
-    Application, Command, Element, Length, Renderer, Subscription, Theme,
+    widget::{button, column, container, image::Handle, row, scrollable, vertical_rule},
+    Application, Command, Length, Subscription, Theme,
 };
 use iced_aw::graphics::icons::ICON_FONT_BYTES;
 use itertools::Itertools;
@@ -44,6 +46,7 @@ pub enum Message {
     ImageDownload(String, f32),
 }
 
+#[derive(Debug)]
 pub enum MainViewState {
     CreateContainer(ButtonState),
     ViewContainer(usize),
@@ -189,13 +192,15 @@ impl Application for DbMgrApp {
                     .iter()
                     .enumerate()
                     .find_map(|(i, container)| {
-                        if container.name == container_name {
+                        if container.id == container_name {
                             Some(MainViewState::ViewContainer(i))
                         } else {
                             None
                         }
                     })
                     .unwrap_or(MainViewState::None);
+
+                println!("{:?}", self.main_view);
 
                 Command::none()
             }
@@ -258,8 +263,8 @@ impl Application for DbMgrApp {
                         container_card(
                             item,
                             self.thumbnails
-                                .get(item.image.split(":").next().unwrap_or(item.image.as_str()))
-                                .map(|item| item.clone())
+                                .get(item.image.split(':').next().unwrap_or(item.image.as_str()))
+                                .cloned()
                                 .unwrap_or_else(|| self.default_thumbnail.clone()),
                         )
                         .on_start_click(Message::StartContainer)
@@ -278,15 +283,24 @@ impl Application for DbMgrApp {
         )
         .width(Length::FillPortion(1));
 
-        let main_windown = container(match self.main_view {
-            MainViewState::CreateContainer(ref state) => {
-                add_container(self.images.clone(), state.clone(), Message::CreateContainer).into()
+        let main_windown = match self.main_view {
+            MainViewState::CreateContainer(ref state) => container(add_container(
+                self.images.clone(),
+                state.clone(),
+                Message::CreateContainer,
+            )),
+            MainViewState::None => container(row!()),
+            MainViewState::ViewContainer(index) => {
+                let ctr = &self.containers[index];
+                container(container_view(
+                    ctr.to_owned(),
+                    self.thumbnails
+                        .get(&ctr.name)
+                        .unwrap_or(&self.default_thumbnail)
+                        .to_owned(),
+                ))
             }
-            MainViewState::None => row!().into(),
-            MainViewState::ViewContainer(_) => {
-                Into::<Element<Message, Renderer>>::into(text("todo"))
-            }
-        })
+        }
         .width(Length::FillPortion(2))
         .align_x(Horizontal::Center)
         .align_y(Vertical::Center);

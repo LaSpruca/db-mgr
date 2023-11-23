@@ -113,14 +113,14 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
             }
             Event::NameChanged(name) => {
                 if let Some((config, _)) = state.data.as_mut() {
-                    config.name = name.replace(" ", "-");
+                    config.name = name.replace(' ', "-");
                 }
 
                 None
             }
             Event::EnvVarChanged { key, value } => {
                 if let Some((config, _)) = state.data.as_mut() {
-                    if value == "" {
+                    if value.is_empty() {
                         _ = config.variables.remove(&key);
                     } else {
                         *config.variables.entry(key).or_insert("".into()) = value;
@@ -138,11 +138,7 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                         .map(|(name, value)| (format!("db-mgr__{}__{name}", config.name), value))
                         .collect();
 
-                    new_config.variables = new_config
-                        .variables
-                        .into_iter()
-                        .filter(|(_, value)| value != "")
-                        .collect();
+                    new_config.variables.retain(|_, value| !value.is_empty());
 
                     new_config.name = format!("db-mgr__{}", config.name);
 
@@ -203,8 +199,7 @@ impl<Message> Component<Message, Renderer> for AddContainer<Message> {
                     .variables
                     .get(variable)
                     .map(|a| a.to_owned())
-                    .unwrap_or_default()
-                    .into();
+                    .unwrap_or_default();
 
                 content = content.push(env_var_row(name.clone(), variable.clone(), value));
             }
